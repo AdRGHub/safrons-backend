@@ -11,6 +11,7 @@ from app.api.saved_regions import router as saved_regions_router
 from app.api.glossaries import router as glossaries_router
 from app.api.expert_glossaries import router as expert_glossaries_router
 from app.api.expert_analytics import router as expert_analytics_router
+from app.api.jagung import router as jagung_router
 from app.core.config import settings
 
 
@@ -85,6 +86,7 @@ def create_app() -> FastAPI:
     app.include_router(glossaries_router)
     app.include_router(expert_glossaries_router)
     app.include_router(expert_analytics_router)
+    app.include_router(jagung_router)
 
     return app
 
