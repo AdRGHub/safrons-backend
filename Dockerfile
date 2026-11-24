@@ -22,6 +22,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy the rest of the application files
 COPY app/ ./app/
 COPY database/ ./database/
+# SAFRONS Jagung: artefak model klaster dan skrip pelatihan
+COPY ml/ ./ml/
 
 
 # Expose port

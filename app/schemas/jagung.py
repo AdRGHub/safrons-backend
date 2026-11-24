@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from app.schemas.cluster import NutrientProfileRead
+
 SuitabilityClass = Literal["S1", "S2", "S3", "N"]
 EvaluationStatus = Literal["evaluated", "insufficient_data"]
 ParameterKey = Literal["ph", "n", "p", "k", "lereng", "tekstur", "drainase"]
@@ -41,6 +43,7 @@ class JagungSuitabilityRead(BaseModel):
     parameters: list[ParameterClass]
     summary: str
     area_ha: float | None = None
+    nutrient_profile: NutrientProfileRead | None = None
 
 
 class RankingItem(BaseModel):
@@ -76,6 +79,7 @@ class JagungSuitabilityProperties(BaseModel):
     limiting_factors: list[ParameterKey]
     potential_limiting_factors: list[ParameterKey]
     area_ha: float | None
+    cluster_id: int | None = None
 
 
 class JagungSuitabilityFeature(BaseModel):

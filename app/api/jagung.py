@@ -28,6 +28,7 @@ from app.services.jagung_suitability import (
     rank_areas,
     validate_criteria,
 )
+from app.services.nutrient_clusters import active_cluster_ids, nutrient_profile
 
 router = APIRouter(prefix="/api/v1/jagung", tags=["jagung"])
 
@@ -60,7 +61,9 @@ def get_jagung_area(
     response.headers["Cache-Control"] = "no-cache"
     record = records[0]
     result = evaluate_area(record.values, criteria)
-    return result.model_copy(update={"area_ha": record.area_ha})
+    return result.model_copy(
+        update={"area_ha": record.area_ha, "nutrient_profile": nutrient_profile(db, area_id)}
+    )
 
 
 @router.get("/ranking", response_model=JagungRankingRead)
@@ -80,6 +83,7 @@ def get_jagung_ranking(
         evaluations,
         min_class=min_class,
         area_ha={record.values.area_id: record.area_ha for record in records},
+        cluster_ids=active_cluster_ids(db),
     )
     response.headers["Cache-Control"] = SHORT_CACHE
     return JagungRankingRead(
@@ -97,6 +101,7 @@ def get_jagung_suitability_layer(
     db: Annotated[Session, Depends(get_db)],
 ) -> JagungSuitabilityCollection:
     criteria = _criteria(db)
+    cluster_ids = active_cluster_ids(db)
     features: list[JagungSuitabilityFeature] = []
     for record in load_area_records(db, with_geometry=True):
         result = evaluate_area(record.values, criteria)
@@ -112,6 +117,7 @@ def get_jagung_suitability_layer(
                     limiting_factors=result.limiting_factors,
                     potential_limiting_factors=result.potential_limiting_factors,
                     area_ha=record.area_ha,
+                    cluster_id=cluster_ids.get(result.area_id),
                 ),
             )
         )
