@@ -1,0 +1,209 @@
+{
+  "model_version": "kmeans-v1",
+  "algorithm": "kmeans",
+  "k": 3,
+  "n_init": 50,
+  "random_state": 42,
+  "feature_description": "pH, log1p(N), log1p(P), log1p(K); StandardScaler",
+  "parameters": {
+    "features": [
+      "ph",
+      "log1p_n",
+      "log1p_p",
+      "log1p_k"
+    ],
+    "scaler_mean": [
+      5.329333611702127,
+      1.526042040036732,
+      2.3191732008500634,
+      5.557126733916551
+    ],
+    "scaler_scale": [
+      0.39743332727679165,
+      0.49582785558121895,
+      0.48542009806223224,
+      0.6023244584723216
+    ],
+    "centroids": [
+      [
+        -0.48779271007691977,
+        0.39101551395847456,
+        -0.30753487692175324,
+        -0.6558602601464312
+      ],
+      [
+        0.8329817406656658,
+        -0.5423950758527042,
+        -0.20106162966470834,
+        0.6183595870310196
+      ],
+      [
+        -1.3302028510237935,
+        0.4062501786844078,
+        2.9861431449437617,
+        0.8533638052209276
+      ]
+    ]
+  },
+  "metrics": {
+    "silhouette": 0.37012333720221546,
+    "ari_mean": 1.0,
+    "ari_min": 1.0,
+    "ari_seeds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "inertia": 380.7836916615326,
+    "n_samples": 188,
+    "n_unique": 41,
+    "cluster_sizes": [
+      94,
+      79,
+      15
+    ],
+    "crosstab_rule_based_status": {
+      "n": {
+        "0": {
+          "high": 30,
+          "low": 19,
+          "medium": 12,
+          "very_high": 26,
+          "very_low": 7
+        },
+        "1": {
+          "low": 22,
+          "medium": 16,
+          "very_high": 9,
+          "very_low": 32
+        },
+        "2": {
+          "medium": 12,
+          "very_high": 3
+        }
+      },
+      "p": {
+        "0": {
+          "high": 25,
+          "low": 11,
+          "medium": 29,
+          "very_high": 9,
+          "very_low": 20
+        },
+        "1": {
+          "high": 1,
+          "low": 28,
+          "medium": 14,
+          "very_high": 12,
+          "very_low": 24
+        },
+        "2": {
+          "very_high": 15
+        }
+      },
+      "k": {
+        "0": {
+          "high": 9,
+          "low": 20,
+          "medium": 24,
+          "very_low": 41
+        },
+        "1": {
+          "high": 17,
+          "low": 20,
+          "medium": 10,
+          "very_high": 32
+        },
+        "2": {
+          "high": 12,
+          "very_high": 3
+        }
+      }
+    },
+    "profile_rule": "rendah bila median klaster < 0.8 x median dataset, tinggi bila > 1.25 x; keasaman dari median pH"
+  },
+  "profiles": [
+    {
+      "cluster_id": 0,
+      "profile_name": "N tinggi, K rendah, masam",
+      "n_areas": 94,
+      "mean": {
+        "ph": 5.135468531914894,
+        "n": 5.659796946808508,
+        "p": 7.824292287234042,
+        "k": 191.52601152127653
+      },
+      "median": {
+        "ph": 5.226667,
+        "n": 5.175256,
+        "p": 8.022388,
+        "k": 158.55372
+      },
+      "levels": {
+        "n": "tinggi",
+        "p": "sedang",
+        "k": "rendah"
+      },
+      "acidity": "masam"
+    },
+    {
+      "cluster_id": 1,
+      "profile_name": "N rendah, K tinggi, agak masam",
+      "n_areas": 79,
+      "mean": {
+        "ph": 5.6603883164556965,
+        "n": 2.700587670886078,
+        "p": 8.713012493670881,
+        "k": 434.0703274683541
+      },
+      "median": {
+        "ph": 5.626667,
+        "n": 2.125247,
+        "p": 7.512195,
+        "k": 390.46306
+      },
+      "levels": {
+        "n": "rendah",
+        "p": "sedang",
+        "k": "tinggi"
+      },
+      "acidity": "agak masam"
+    },
+    {
+      "cluster_id": 2,
+      "profile_name": "P tinggi, K tinggi, sangat masam",
+      "n_areas": 15,
+      "mean": {
+        "ph": 4.800666666666666,
+        "n": 5.297257200000001,
+        "p": 45.29759426666667,
+        "k": 458.8860119999999
+      },
+      "median": {
+        "ph": 4.7675,
+        "n": 3.548585,
+        "p": 35.739455,
+        "k": 383.6937
+      },
+      "levels": {
+        "n": "sedang",
+        "p": "tinggi",
+        "k": "tinggi"
+      },
+      "acidity": "sangat masam"
+    }
+  ],
+  "versions": {
+    "python": "3.11.18",
+    "scikit_learn": "1.9.1",
+    "numpy": "2.4.6",
+    "joblib": "1.6.0"
+  }
+}
