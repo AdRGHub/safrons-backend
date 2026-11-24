@@ -12,6 +12,9 @@ from app.api.glossaries import router as glossaries_router
 from app.api.expert_glossaries import router as expert_glossaries_router
 from app.api.expert_analytics import router as expert_analytics_router
 from app.api.jagung import router as jagung_router
+from app.api.clusters import router as clusters_router
+from app.api.expert_clusters import router as expert_clusters_router
+from app.api.admin_clusters import router as admin_clusters_router
 from app.core.config import settings
 
 
@@ -87,6 +90,9 @@ def create_app() -> FastAPI:
     app.include_router(expert_glossaries_router)
     app.include_router(expert_analytics_router)
     app.include_router(jagung_router)
+    app.include_router(clusters_router)
+    app.include_router(expert_clusters_router)
+    app.include_router(admin_clusters_router)
 
     return app
 

@@ -14,10 +14,12 @@ saat melayani permintaan publik.
 from __future__ import annotations
 
 import json
+import os
 import platform
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,15 +29,24 @@ import sklearn
 from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score, silhouette_score
 from sklearn.preprocessing import StandardScaler
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.hara import HaraArea
 from app.models.nutrient_cluster import (
     ClusterFertilizerPackage,
     HaraClusterAssignment,
     MlModelRun,
     NutrientCluster,
+)
+from app.schemas.cluster import (
+    ClusterRead,
+    ClustersRead,
+    ModelRunRead,
+    NutrientProfileRead,
+    PackageRead,
+    PackageUpdate,
 )
 from app.services.hara_diagnosis import NUTRIENT_THRESHOLDS, classify_by_thresholds
 
@@ -418,7 +429,7 @@ def persist_training(
         ari_mean=result.ari_mean,
         ari_min=result.ari_min,
         inertia=float(result.metrics["inertia"]),
-        metrics=result.metrics,
+        metrics={**result.metrics, "parameters": model_parameters(result)},
         artifact_path=artifact_path,
         is_active=activate,
         triggered_by=triggered_by,
@@ -464,3 +475,297 @@ def persist_training(
     )
     db.flush()
     return run
+
+
+# ---------------------------------------------------------------------------
+# Runtime: prediksi, profil per poligon, paket, retrain
+# ---------------------------------------------------------------------------
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PARAMETER_KEYS = ("scaler_mean", "scaler_scale", "centroids")
+
+# Cache parameter model per versi (keputusan 2b): dimuat saat pertama kali dipakai,
+# dikosongkan setelah retrain.
+_PARAMETER_CACHE: dict[str, dict[str, Any]] = {}
+
+
+class ClusterModelError(RuntimeError):
+    """Model klaster aktif tidak dapat dipakai (parameter atau artefak tidak ada)."""
+
+
+def artifact_root() -> Path:
+    """Folder dasar untuk artifact_path di ml_model_runs (bawaan: akar repo).
+
+    Dapat diganti lewat CLUSTER_ARTIFACT_ROOT (variabel lingkungan atau .env), mis.
+    volume persisten di deployment.
+    """
+    configured = os.environ.get("CLUSTER_ARTIFACT_ROOT") or settings.cluster_artifact_root
+    return Path(configured) if configured else REPO_ROOT
+
+
+def clear_model_cache() -> None:
+    _PARAMETER_CACHE.clear()
+
+
+def active_run(db: Session) -> MlModelRun | None:
+    return db.scalar(select(MlModelRun).where(MlModelRun.is_active.is_(True)))
+
+
+def run_parameters(run: MlModelRun) -> dict[str, Any]:
+    """Parameter scaler dan centroid versi model.
+
+    Diutamakan dari ml_model_runs.metrics["parameters"] (tidak bergantung pada
+    disk). Versi lama tanpa kolom itu dibaca dari meta.json di artifact_path.
+    """
+    cached = _PARAMETER_CACHE.get(run.model_version)
+    if cached is not None:
+        return cached
+    parameters = (run.metrics or {}).get("parameters")
+    if parameters is None:
+        meta_path = artifact_root() / run.artifact_path / "meta.json"
+        if not meta_path.exists():
+            raise ClusterModelError(
+                f"Parameter model {run.model_version} tidak ada di basis data dan "
+                f"{meta_path} tidak ditemukan."
+            )
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if meta.get("model_version") != run.model_version:
+            raise ClusterModelError(
+                f"meta.json di {meta_path} milik versi {meta.get('model_version')}, "
+                f"bukan {run.model_version}."
+            )
+        parameters = meta["parameters"]
+    missing = [key for key in PARAMETER_KEYS if key not in parameters]
+    if missing:
+        raise ClusterModelError(
+            f"Parameter model {run.model_version} tidak lengkap: {', '.join(missing)}."
+        )
+    _PARAMETER_CACHE[run.model_version] = parameters
+    return parameters
+
+
+def predict_cluster(parameters: dict[str, Any], ph: float, n: float, p: float, k: float) -> int:
+    """Centroid terdekat pada ruang fitur terstandardisasi (setara KMeans.predict)."""
+    features = np.array([ph, np.log1p(n), np.log1p(p), np.log1p(k)], dtype=float)
+    scaled = (features - np.array(parameters["scaler_mean"])) / np.array(parameters["scaler_scale"])
+    centroids = np.array(parameters["centroids"], dtype=float)
+    return int(((centroids - scaled) ** 2).sum(axis=1).argmin())
+
+
+def reassign_cluster(db: Session, area_id: int) -> int | None:
+    """Perbarui cluster_id satu poligon untuk versi model aktif (F-15).
+
+    Dipanggil di dalam transaksi edit/buat area oleh expert, sebelum commit.
+    Mengembalikan cluster_id baru, atau None bila belum ada model aktif atau data
+    hara poligon tidak lengkap (assignment lama untuk versi aktif dihapus).
+    """
+    run = active_run(db)
+    if run is None:
+        return None
+    db.flush()
+    area = db.execute(
+        select(HaraArea).where(HaraArea.id == area_id).execution_options(populate_existing=True)
+    ).scalar_one_or_none()
+    if area is None:
+        return None
+    db.execute(
+        delete(HaraClusterAssignment).where(
+            HaraClusterAssignment.hara_area_id == area_id,
+            HaraClusterAssignment.model_version == run.model_version,
+        )
+    )
+    values = (area.ph_rata2, area.n_rata2, area.p_rata2, area.k_rata2)
+    no_data_name = (area.name or "").strip().lower() in NO_DATA_NAMES
+    if no_data_name or not all(_valid(v) for v in values):
+        db.flush()
+        return None
+    ph, n, p, k = (float(v) for v in values)  # type: ignore[arg-type]
+    cluster_id = predict_cluster(run_parameters(run), ph, n, p, k)
+    db.add(
+        HaraClusterAssignment(
+            hara_area_id=area_id, model_version=run.model_version, cluster_id=cluster_id
+        )
+    )
+    db.flush()
+    return cluster_id
+
+
+def _package_read(package: ClusterFertilizerPackage | None) -> PackageRead | None:
+    if package is None:
+        return None
+    return PackageRead(
+        cluster_id=package.cluster_id,
+        title=package.title,
+        content=package.content,
+        is_draft=package.is_draft,
+        updated_by=package.updated_by,
+        updated_at=package.updated_at,
+    )
+
+
+def _package(db: Session, model_version: str, cluster_id: int) -> ClusterFertilizerPackage | None:
+    return db.scalar(
+        select(ClusterFertilizerPackage).where(
+            ClusterFertilizerPackage.model_version == model_version,
+            ClusterFertilizerPackage.cluster_id == cluster_id,
+        )
+    )
+
+
+def nutrient_profile(db: Session, area_id: int) -> NutrientProfileRead | None:
+    """Tipe profil hara dan paket pemupukan satu poligon (versi model aktif)."""
+    run = active_run(db)
+    if run is None:
+        return None
+    assignment = db.get(HaraClusterAssignment, (area_id, run.model_version))
+    if assignment is None:
+        return None
+    cluster = db.get(NutrientCluster, (run.model_version, assignment.cluster_id))
+    if cluster is None:
+        return None
+    return NutrientProfileRead(
+        model_version=run.model_version,
+        cluster_id=cluster.cluster_id,
+        profile_name=cluster.profile_name,
+        package=_package_read(_package(db, run.model_version, cluster.cluster_id)),
+    )
+
+
+def active_cluster_ids(db: Session) -> dict[int, int]:
+    """area_id -> cluster_id untuk versi aktif; kosong bila belum ada model."""
+    run = active_run(db)
+    if run is None:
+        return {}
+    rows = db.execute(
+        select(HaraClusterAssignment.hara_area_id, HaraClusterAssignment.cluster_id).where(
+            HaraClusterAssignment.model_version == run.model_version
+        )
+    ).all()
+    return {area_id: cluster_id for area_id, cluster_id in rows}
+
+
+def list_clusters(db: Session) -> ClustersRead:
+    run = active_run(db)
+    if run is None:
+        return ClustersRead(model_version=None, silhouette=None, clusters=[])
+    clusters = db.scalars(
+        select(NutrientCluster)
+        .where(NutrientCluster.model_version == run.model_version)
+        .order_by(NutrientCluster.cluster_id)
+    ).all()
+    return ClustersRead(
+        model_version=run.model_version,
+        silhouette=None if run.silhouette is None else float(run.silhouette),
+        clusters=[
+            ClusterRead(
+                cluster_id=c.cluster_id,
+                profile_name=c.profile_name,
+                n_areas=c.n_areas,
+                mean_ph=float(c.mean_ph),
+                mean_n=float(c.mean_n),
+                mean_p=float(c.mean_p),
+                mean_k=float(c.mean_k),
+                median_ph=float(c.median_ph),
+                median_n=float(c.median_n),
+                median_p=float(c.median_p),
+                median_k=float(c.median_k),
+                package=_package_read(_package(db, run.model_version, c.cluster_id)),
+            )
+            for c in clusters
+        ],
+    )
+
+
+def update_package(
+    db: Session, cluster_id: int, payload: PackageUpdate, user_id: int
+) -> PackageRead | None:
+    """Ubah paket pemupukan klaster pada versi aktif. None bila tidak ditemukan."""
+    run = active_run(db)
+    if run is None:
+        return None
+    package = _package(db, run.model_version, cluster_id)
+    if package is None:
+        return None
+    package.title = payload.title.strip()
+    package.content = payload.content.strip()
+    package.is_draft = payload.is_draft
+    package.updated_by = user_id
+    package.updated_at = datetime.now(UTC)
+    db.flush()
+    return _package_read(package)
+
+
+def retrain(
+    db: Session,
+    *,
+    triggered_by: int | None,
+    k: int = DEFAULT_K,
+    n_init: int = DEFAULT_N_INIT,
+    random_state: int = DEFAULT_RANDOM_STATE,
+) -> MlModelRun:
+    """Latih ulang penuh dari data terkini, simpan artefak, aktifkan versi baru (F-16).
+
+    Paket yang sudah divalidasi expert (is_draft = FALSE) disalin ke klaster versi
+    baru yang nama profilnya sama; klaster lain mendapat draf baru. Tidak commit.
+    """
+    previous = active_run(db)
+    validated: dict[str, ClusterFertilizerPackage] = {}
+    if previous is not None:
+        for cluster in db.scalars(
+            select(NutrientCluster).where(NutrientCluster.model_version == previous.model_version)
+        ).all():
+            package = _package(db, previous.model_version, cluster.cluster_id)
+            if package is not None and not package.is_draft:
+                validated[cluster.profile_name] = package
+
+    version = f"kmeans-{datetime.now(UTC):%Y%m%d-%H%M%S}"
+    result = train_clusters(
+        load_samples(db), model_version=version, k=k, n_init=n_init, random_state=random_state
+    )
+    relative = Path("ml") / "artifacts" / version
+    target = artifact_root() / relative
+    if target.exists():
+        raise TrainingError(f"Folder artefak {relative.as_posix()} sudah ada.")
+    run = persist_training(
+        db, result, artifact_path=relative.as_posix(), triggered_by=triggered_by, activate=True
+    )
+    save_artifacts(result, target)
+    for profile in result.profiles:
+        source = validated.get(profile.profile_name)
+        if source is None:
+            continue
+        package = _package(db, version, profile.cluster_id)
+        if package is not None:
+            package.title = source.title
+            package.content = source.content
+            package.is_draft = False
+            package.updated_by = source.updated_by
+    db.flush()
+    clear_model_cache()
+    return run
+
+
+def list_runs(db: Session) -> list[ModelRunRead]:
+    runs = db.scalars(
+        select(MlModelRun).order_by(MlModelRun.trained_at.desc(), MlModelRun.id.desc())
+    ).all()
+    return [
+        ModelRunRead(
+            model_version=r.model_version,
+            algorithm=r.algorithm,
+            k=r.k,
+            n_init=r.n_init,
+            random_state=r.random_state,
+            n_samples=r.n_samples,
+            n_unique=r.n_unique,
+            silhouette=None if r.silhouette is None else float(r.silhouette),
+            ari_mean=None if r.ari_mean is None else float(r.ari_mean),
+            ari_min=None if r.ari_min is None else float(r.ari_min),
+            cluster_sizes=list((r.metrics or {}).get("cluster_sizes", [])),
+            artifact_path=r.artifact_path,
+            is_active=r.is_active,
+            triggered_by=r.triggered_by,
+            trained_at=r.trained_at,
+        )
+        for r in runs
+    ]

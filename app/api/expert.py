@@ -16,6 +16,7 @@ from app.models.user import User
 from app.schemas.advisory import AdvisoryCreate, AdvisoryRead, AdvisoryUpdate
 from app.schemas.hara import HaraAreaCreate, HaraAreaUpdate, HaraFeature
 from app.services.hara_lookup import get_hara_feature_by_id, hara_area_to_feature, require_hara_feature
+from app.services.nutrient_clusters import reassign_cluster
 
 router = APIRouter(prefix="/api/v1/expert", tags=["expert"])
 
@@ -107,6 +108,7 @@ def update_hara_area(
         for field, value in changes.items():
             setattr(area, field, value)
         add_hara_change(db, area_id, expert_user.id, "update", changes)
+        reassign_cluster(db, area_id)
         db.commit()
         db.refresh(area)
         return hara_area_to_feature(area)
@@ -120,6 +122,7 @@ def update_hara_area(
         {**changes, "area_id": area_id},
     )
     add_hara_change(db, area_id, expert_user.id, "update", changes)
+    reassign_cluster(db, area_id)
     db.commit()
     return require_hara_feature(db, area_id)
 
@@ -142,6 +145,7 @@ def create_hara_area(
             "create",
             {"geometry_type": payload.geometry["type"], **properties},
         )
+        reassign_cluster(db, area.id)
         db.commit()
         db.refresh(area)
         return hara_area_to_feature(area)
@@ -200,6 +204,7 @@ def create_hara_area(
         "create",
         {"geometry_type": payload.geometry["type"], **properties},
     )
+    reassign_cluster(db, area_id)
     db.commit()
     return require_hara_feature(db, area_id)
 

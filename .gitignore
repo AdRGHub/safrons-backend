@@ -23,3 +23,6 @@ node_modules/
 dist/
 build/
 *.egg-info/
+
+# SAFRONS Jagung: artefak hasil retrain admin (versi bertanda waktu) tidak di-commit
+ml/artifacts/kmeans-2*/
