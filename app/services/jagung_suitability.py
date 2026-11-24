@@ -21,11 +21,12 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.models.hara import HaraArea
 from app.models.jagung_criteria import JagungCriterion
 from app.schemas.jagung import (
     ImprovementStep,
@@ -121,6 +122,15 @@ class AreaValues:
     texture_of: str | None
     unitname: str | None
     soil_great: str | None
+
+
+@dataclass(frozen=True)
+class AreaRecord:
+    """Atribut poligon beserta luas (ha) dan geometri GeoJSON bila tersedia."""
+
+    values: AreaValues
+    area_ha: float | None = None
+    geometry: dict[str, Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -492,4 +502,91 @@ def rank_areas(
             area_ha=areas.get(e.area_id),
         )
         for index, e in enumerate(ordered, start=1)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Pemuat data poligon
+# ---------------------------------------------------------------------------
+
+# Kolom unitname dan soil_great tidak dipetakan di model HaraArea (models/hara.py
+# sengaja tidak diubah), sehingga di PostgreSQL dibaca lewat SQL mentah.
+AREA_COLUMNS = """
+    id,
+    name,
+    ph_rata2,
+    n_rata2,
+    p_rata2,
+    k_rata2,
+    slope__,
+    texture_of,
+    unitname,
+    soil_great,
+    ST_Area(geom::geography) / 10000.0 AS area_ha
+"""
+GEOMETRY_COLUMN = "ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.0001))::json AS geometry"
+
+
+def _number(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
+def load_area_records(
+    db: Session, *, area_id: int | None = None, with_geometry: bool = False
+) -> list[AreaRecord]:
+    """Muat poligon hara_bogor untuk evaluasi jagung, urut menurut id.
+
+    Di PostgreSQL/PostGIS: termasuk unitname, luas (ha, dihitung pada geografi)
+    dan, bila diminta, geometri GeoJSON yang disederhanakan seperti /hara/areas.
+    Di dialek lain (SQLite pada uji): hanya kolom model HaraArea; unitname,
+    luas, dan geometri bernilai None.
+    """
+    if db.get_bind().dialect.name != "postgresql":
+        statement = select(HaraArea).order_by(HaraArea.id)
+        if area_id is not None:
+            statement = statement.where(HaraArea.id == area_id)
+        return [
+            AreaRecord(
+                values=AreaValues(
+                    area_id=area.id,
+                    name=area.name,
+                    ph=_number(area.ph_rata2),
+                    n=_number(area.n_rata2),
+                    p=_number(area.p_rata2),
+                    k=_number(area.k_rata2),
+                    slope=area.slope__,
+                    texture_of=area.texture_of,
+                    unitname=None,
+                    soil_great=area.soil_great,
+                )
+            )
+            for area in db.scalars(statement).all()
+        ]
+
+    columns = AREA_COLUMNS + (f",\n    {GEOMETRY_COLUMN}" if with_geometry else "")
+    where = "WHERE id = :area_id" if area_id is not None else ""
+    rows = db.execute(
+        text(f"SELECT {columns} FROM hara_bogor {where} ORDER BY id"),
+        {"area_id": area_id} if area_id is not None else {},
+    ).mappings()
+    return [
+        AreaRecord(
+            values=AreaValues(
+                area_id=row["id"],
+                name=row["name"],
+                ph=_number(row["ph_rata2"]),
+                n=_number(row["n_rata2"]),
+                p=_number(row["p_rata2"]),
+                k=_number(row["k_rata2"]),
+                slope=row["slope__"],
+                texture_of=row["texture_of"],
+                unitname=row["unitname"],
+                soil_great=row["soil_great"],
+            ),
+            area_ha=_number(row["area_ha"]),
+            geometry=row["geometry"] if with_geometry else None,
+        )
+        for row in rows
     ]

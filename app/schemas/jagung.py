@@ -1,6 +1,6 @@
 """Schema respons evaluasi kesesuaian jagung (SAFRONS Jagung)."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -40,6 +40,7 @@ class JagungSuitabilityRead(BaseModel):
     missing_parameters: list[ParameterKey]
     parameters: list[ParameterClass]
     summary: str
+    area_ha: float | None = None
 
 
 class RankingItem(BaseModel):
@@ -54,3 +55,38 @@ class RankingItem(BaseModel):
     improvable_factors: list[ParameterKey]
     cluster_id: int | None = None
     area_ha: float | None = None
+
+
+class JagungRankingRead(BaseModel):
+    """Peringkat rekomendasi lahan jagung beserta konteks filternya."""
+
+    rule_set_version: str
+    min_class: SuitabilityClass
+    limit: int
+    total_candidates: int
+    items: list[RankingItem]
+
+
+class JagungSuitabilityProperties(BaseModel):
+    id: int
+    name: str | None
+    status: EvaluationStatus
+    actual_class: SuitabilityClass | None
+    potential_class: SuitabilityClass | None
+    limiting_factors: list[ParameterKey]
+    potential_limiting_factors: list[ParameterKey]
+    area_ha: float | None
+
+
+class JagungSuitabilityFeature(BaseModel):
+    type: Literal["Feature"] = "Feature"
+    geometry: dict[str, Any] | None
+    properties: JagungSuitabilityProperties
+
+
+class JagungSuitabilityCollection(BaseModel):
+    """Lapisan peta kesesuaian jagung (GeoJSON FeatureCollection)."""
+
+    type: Literal["FeatureCollection"] = "FeatureCollection"
+    rule_set_version: str
+    features: list[JagungSuitabilityFeature]
