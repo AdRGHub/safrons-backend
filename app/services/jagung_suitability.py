@@ -435,11 +435,13 @@ def _summary(
 ) -> str:
     text = f"Kelas aktual {actual} ({CLASS_LABELS[actual]})"
     if limiting:
-        text += ", dibatasi oleh " + ", ".join(PARAMETER_LABELS[p].lower() for p in limiting)
+        text += ", dibatasi oleh " + ", ".join(PARAMETER_LABELS[p] for p in limiting)
     text += f". Kelas potensial {potential} ({CLASS_LABELS[potential]})"
     if potential_limiting:
-        text += " dengan faktor permanen " + ", ".join(
-            PARAMETER_LABELS[p].lower() for p in potential_limiting
+        # Pembatas pada kelas potensial belum tentu permanen: drainase yang
+        # dinaikkan satu kelas bisa tetap menjadi pembatas.
+        text += " setelah perbaikan; pembatas yang tersisa: " + ", ".join(
+            PARAMETER_LABELS[p] for p in potential_limiting
         )
     return text + "."
 

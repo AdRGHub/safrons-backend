@@ -234,7 +234,12 @@ def test_wet_flat_land_improves_one_class() -> None:
     assert result.limiting_factors == ["n", "drainase"]
     assert result.improvable_factors == ["n", "drainase"]
     assert result.potential_limiting_factors == ["drainase"]
-    assert "Kelas aktual S3" in result.summary
+    assert result.summary == (
+        "Kelas aktual S3 (sesuai marginal), dibatasi oleh Nitrogen (N), Drainase (perkiraan). "
+        "Kelas potensial S2 (cukup sesuai) setelah perbaikan; pembatas yang tersisa: "
+        "Drainase (perkiraan)."
+    )
+    assert "permanen" not in result.summary
 
 
 def test_coarse_texture_limits_potential() -> None:
